@@ -7,8 +7,8 @@ from models.tree import Tree
 
 
 def predict_probs(tree: Tree, targets: np.ndarray) -> Tuple[np.ndarray, np.ndarray]:
-    classes = np.unique(targets)
     targets = targets[tree.data]
+    classes = np.unique(targets)
     probs = np.zeros((targets.shape[0], classes.shape[0]))
     for leaf_data in tree.get_leaf_data():
         leaf_data = leaf_data[tree.data]
@@ -26,17 +26,21 @@ def roc_auc(tree: Tree, targets: np.ndarray) -> float:
     targets, probs = predict_probs(tree=tree, targets=targets)
     if probs.shape[1] > 2:
         return roc_auc_score(y_true=targets, y_score=probs, multi_class="ovr", average="macro")
-    return roc_auc_score(y_true=targets, y_score=probs[:, 1])
+    if probs.shape[1] == 2:
+        return roc_auc_score(y_true=targets, y_score=probs[:, 1])
+    return 1.0
 
 
 def average_precision(tree: Tree, targets: np.ndarray) -> float:
     targets, probs = predict_probs(tree=tree, targets=targets)
     if probs.shape[1] > 2:
         raise NotImplementedError
-    return average_precision_score(y_true=targets, y_score=probs)
+    if probs.shape[1] == 2:
+        return average_precision_score(y_true=targets, y_score=probs[:, 1])
+    return 1.0
 
 
-def weighed_gini_impurity(tree: Tree, targets: np.ndarray) -> float:
+def weighted_gini_impurity(tree: Tree, targets: np.ndarray) -> float:
     targets, probs = predict_probs(tree=tree, targets=targets)
     return (1 - (probs * probs).sum(1)).mean()
 

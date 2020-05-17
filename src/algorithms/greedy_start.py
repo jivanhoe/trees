@@ -10,22 +10,41 @@ class GreedyStart:
 
     def __init__(
             self,
-            loss_criterion: Callable,
+            criterion: Callable,
             min_leaf_size: int = 1,
             max_depth: int = 10,
             max_features: Optional[float] = None,
-            max_examples: Optional[float] = None,
+            max_samples: Optional[float] = None,
             random_state: int = 0
     ):
-        self.loss_criterion = loss_criterion
+        """
+        Initialize a greedy search object used to a build feasible tree.
+        :param criterion: a callable object that accepts the arguments 'tree', a Tree object, and 'targets', a
+        numpy array of shape (n_samples,), and returns a float representing the objective the tree on the data
+        :param min_leaf_size: an integer hyperparameter specifying the minimum number of training examples in any leaf
+        :param max_depth:  an integer hyperparameter specifying the maximum depth of any leaf
+        :param max_features: a float hyperparameter in range (0, 1] the specifies the proportion of features considered
+        for each greedy split
+        :param max_samples: a float hyperparameter in range (0, 1] that specifies the proportion of samples from the
+        training data used to inform the greedy splits when growing the tree
+        :param random_state: an integer used to set the numpy seed to control the random behavior of the algorithm
+        """
+        self.criterion = criterion
         self.min_leaf_size = min_leaf_size
         self.max_depth = max_depth
         self.max_features = max_features
-        self.max_examples = max_examples
+        self.max_samples = max_samples
         self.random_state = random_state
         self.tree = Tree()
 
-    def _make_greedy_split(self, subtree: Tree, inputs: np.ndarray, targets: np.ndarry) -> None:
+    def _make_greedy_split(self, subtree: Tree, inputs: np.ndarray, targets: np.ndarray) -> None:
+        """
+        Blah
+        :param subtree: a Tree object
+        :param inputs: a numpy array of shape (n_samples, n_features) specifying the input values of the data
+        :param targets: a numpy array of shape (n_samples,) specifying the target values of the data
+        :return: None
+        """
 
         # Initialize loss and best split parameters
         min_loss, best_split_feature, best_split_threshold = np.inf, None, None
@@ -54,14 +73,21 @@ class GreedyStart:
                 if self.min_leaf_size <= min([leaf_data.sum() for leaf_data in subtree.get_leaf_data()]):
 
                     # Check if split improves objective and update best split if so
-                    loss = self.loss_criterion(subtree=subtree, targets=targets)
+                    loss = -self.criterion(tree=subtree, targets=targets)
                     if loss < min_loss:
                         min_loss, best_split_feature, best_split_threshold = loss, split_feature, split_threshold
 
         # Reset root split to best split
         subtree.update_splits(inputs=inputs, split_feature=best_split_feature, split_threshold=best_split_threshold)
 
-    def _grow(self, subtree: Tree, inputs: np.ndarray, targets: np.ndarry) -> None:
+    def _grow(self, subtree: Tree, inputs: np.ndarray, targets: np.ndarray) -> None:
+        """
+        Recursively grow a tree using greedy splits until max depth or min leaf size is reached.
+        :param subtree: a Tree object
+        :param inputs: a numpy array of shape (n_samples, n_features) specifying the input values of the data
+        :param targets: a numpy array of shape (n_samples,) specifying the target values of the data
+        :return: None
+        """
 
         # Check if subtree is leaf
         if subtree.is_leaf():
@@ -75,7 +101,13 @@ class GreedyStart:
                 if (child.data.sum() > self.min_leaf_size) and (child.root_depth < self.max_depth):
                     self._grow(subtree=child, inputs=inputs, targets=targets)
 
-    def build_tree(self, inputs: np.ndarray, targets: np.ndarry) -> Tree:
+    def build_tree(self, inputs: np.ndarray, targets: np.ndarray) -> Tree:
+        """
+        Build a feasible (and sensible) tree using a greedy splitting heuristic.
+        :param inputs: a numpy array of shape (n_samples, n_features) specifying the input values of the data
+        :param targets: a numpy array of shape (n_samples,) specifying the target values of the data
+        :return: a Tree object that is feasible for the given data and hyperparameters
+        """
 
         # Set seed
         np.random.seed(self.random_state)
@@ -85,9 +117,9 @@ class GreedyStart:
             self.max_features = 1 / np.sqrt(inputs.shape[1])
 
         # If max examples is specified, select a stratified sample of training data
-        if self.max_examples:
+        if self.max_samples:
             inputs, targets, _, _ = train_test_split(inputs, targets, shuffle=True, stratify=targets,
-                                                     test_size=1-self.max_examples)
+                                                     test_size=1-self.max_samples)
 
         # Initialize tree data
         self.tree.data = np.ones(inputs.shape[0], dtype=bool)

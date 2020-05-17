@@ -48,8 +48,8 @@ class Tree:
             subtrees = []
         subtrees.append(self)
         if not self.is_leaf():
-            self.left.nodes(subtrees=subtrees)
-            self.right.nodes(subtrees=subtrees)
+            self.left.get_subtrees(subtrees=subtrees)
+            self.right.get_subtrees(subtrees=subtrees)
         return subtrees
 
     def get_leaf_data(self, leaf_data: Optional[List] = None) -> List[np.ndarray]:
@@ -58,8 +58,8 @@ class Tree:
         if self.is_leaf():
             leaf_data.append(self.data)
         else:
-            self.left.leaf_data(data=leaf_data)
-            self.right.leaf_data(data=leaf_data)
+            self.left.get_leaf_data(leaf_data=leaf_data)
+            self.right.get_leaf_data(leaf_data=leaf_data)
         return leaf_data
 
     def update_splits(
@@ -80,8 +80,9 @@ class Tree:
 
     def update_depth(self) -> None:
         for child in self.get_children():
-            child.root_depth = self.root_depth + 1
-            child.update_depth()
+            if child:
+                child.root_depth = self.root_depth + 1
+                child.update_depth()
 
 
 
