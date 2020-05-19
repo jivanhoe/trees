@@ -5,7 +5,7 @@ import numpy as np
 
 from models.tree import Tree
 from algorithms.greedy_start import GreedyStart
-from metrics.classification_metrics import weighted_gini_impurity
+from metrics.classification_metrics import weighted_gini_purity
 from metrics.regression_metrics import mean_squared_error
 
 
@@ -20,6 +20,7 @@ class LocalSearch:
             max_depth: int = 10,
             complexity_param: float = 0.0,
             tol: float = 1e-5,
+            max_iterations: int = 10,
             random_state: int = 0
     ):
         """
@@ -35,8 +36,10 @@ class LocalSearch:
         :param max_depth: an integer hyperparameter the specifies the maximum depth of any leaf (default 10)
         :param complexity_param: a float hyperparameter that controls the trade-off between the ability of the tree to
         fit the training data and its
-        :param tol: a
+        :param tol:
+        :param max_iterations:
         :param random_state: an integer used to set the numpy seed to control the random behavior of the algorithm
+        (default 0)
         """
         self.criterion = criterion
         self.is_classifier = is_classifier
@@ -45,6 +48,7 @@ class LocalSearch:
         self.max_depth = max_depth
         self.complexity_param = complexity_param
         self.tol = tol
+        self.max_iterations = max_iterations
         self.random_state = random_state
 
     def _regularized_loss(self, subtree: Tree, targets: np.ndarray) -> float:
@@ -71,22 +75,26 @@ class LocalSearch:
 
         # Add children if subtree is leaf
         if subtree.is_leaf():
-            subtree.left, subtree.right = Tree(), Tree()
+            subtree.left, subtree.right = Tree(data=deepcopy(subtree.data)), Tree(data=deepcopy(subtree.data))
 
         for split_feature in range(inputs.shape[1]):
 
             # Get reference values for candidate split thresholds for feature
-            values = inputs[subtree.data, split_feature].flatten()
-            values.sort()
+            values = np.unique(inputs[subtree.data.key, split_feature].flatten())
 
-            for i in range(values.shape[0] - 1):
+            for split_threshold in (values[:-1] + values[1:]) / 2:
 
                 # Update root split
-                split_threshold = (values[i] + values[i + 1]) / 2
-                subtree.update_splits(inputs=inputs, split_feature=split_feature, split_threshold=split_threshold)
+                subtree.update_splits(
+                    inputs=inputs,
+                    targets=targets,
+                    split_feature=split_feature,
+                    split_threshold=split_threshold,
+                    update_leaf_values_only=True
+                )
 
                 # Check if split is feasible
-                if self.min_leaf_size <= min([leaf_data.sum() for leaf_data in subtree.get_leaf_data()]):
+                if min([leaf_data.key.sum() for leaf_data in subtree.get_leaf_data()]) >= self.min_leaf_size:
 
                     # Check if split improves objective and update best split if so
                     loss = self._regularized_loss(subtree=subtree, targets=targets)
@@ -98,7 +106,14 @@ class LocalSearch:
             subtree.left, subtree.right = None, None
 
         # Reset root split to best split and return min loss
-        subtree.update_splits(inputs=inputs, split_feature=best_split_feature, split_threshold=best_split_threshold)
+        subtree.update_splits(
+            inputs=inputs,
+            targets=targets,
+            split_feature=best_split_feature,
+            split_threshold=best_split_threshold,
+            update_leaf_values_only=True
+        )
+        subtree.update_depth()
         return min_loss
 
     def _optimize_subtree_root_node(self, subtree: Tree, inputs: np.ndarray, targets: np.ndarray) -> float:
@@ -114,7 +129,7 @@ class LocalSearch:
         left, right = map(deepcopy, subtree.get_children())
 
         # Optimize root split if split does not exceed max depth and calculate min loss
-        if subtree.root_depth < self.max_depth:
+        if subtree.root_depth < self.max_depth and not subtree.is_pure():
             min_loss = self._optimize_subtree_root_split(subtree=subtree, inputs=inputs, targets=targets)
         else:
             min_loss = self._regularized_loss(subtree=subtree, targets=targets)
@@ -123,14 +138,42 @@ class LocalSearch:
         for child in (left, right):
             if child:
                 child.data = subtree.data
-                child.update_splits(inputs=inputs)
+                child.update_splits(inputs=inputs, targets=targets, update_leaf_values_only=True)
                 loss = self._regularized_loss(subtree=child, targets=targets)
                 if loss < min_loss:
                     min_loss = loss
                     subtree.left, subtree.right = child.left, child.right
-                    subtree.update_splits(inputs=inputs, split_feature=child.split_feature,
-                                          split_threshold=child.split_threshold)
+                    subtree.update_splits(
+                        inputs=inputs,
+                        targets=targets,
+                        split_feature=child.split_feature,
+                        split_threshold=child.split_threshold,
+                        update_leaf_values_only=True
+                    )
+        subtree.update_depth()
         return min_loss
+
+    def _initialize_tree(self, inputs: np.ndarray, targets: np.ndarray) -> None:
+        """
+        If no tree provided, initialize a feasible solution one using a greedy splitting heuristic. Update splits for
+        the full training data set.
+        :param inputs: a numpy array of shape (n_samples, n_features) specifying the input values of the data
+        :param targets: a numpy array of shape (n_samples,) specifying the target values of the data
+        :return: None
+        """
+
+        if self.tree is None:
+            greedy_start = GreedyStart(
+                criterion=(weighted_gini_purity if self.is_classifier else mean_squared_error),
+                is_classifier=self.is_classifier,
+                min_leaf_size=self.min_leaf_size,
+                max_depth=self.max_depth,
+                random_state=self.random_state
+            )
+            self.tree = greedy_start.build_tree(inputs=inputs, targets=targets)
+
+        self.tree.data.keys = np.ones(inputs.shape[0], dtype=bool)
+        self.tree.update_splits(inputs=inputs, targets=targets)
 
     def optimize_tree(self, inputs: np.ndarray, targets: np.ndarray) -> Tree:
         """
@@ -143,30 +186,28 @@ class LocalSearch:
         # Set seed
         np.random.seed(self.random_state)
 
-        # Initialize tree
-        if self.tree is None:
-            greedy_start = GreedyStart(criterion=(weighted_gini_impurity if self.is_classifier else mean_squared_error),
-                                       min_leaf_size=self.min_leaf_size, max_depth=self.max_depth,
-                                       random_state=self.random_state)
-            self.tree = greedy_start.build_tree(inputs=inputs, targets=targets)
-        self.tree.data = np.ones(inputs.shape[0], dtype=bool)
-        self.tree.update_splits(inputs=inputs)
-
-        # Initialize loss
+        # Initialize tree and loss
+        self._initialize_tree(inputs=inputs, targets=targets)
         prev_loss, loss = np.inf, self._regularized_loss(subtree=self.tree, targets=targets)
 
-        # Iterate until improvement is less than cut-off tolerance
-        while np.abs(loss - prev_loss) > self.tol:
+        print(loss)
+
+        # Iterate until improvement is less than cut-off tolerance or max iterations reached
+        for _ in range(self.max_iterations):
 
             # Iterate through subtrees is random order and optimize each subtree root node
             subtrees = self.tree.get_subtrees()
             np.random.shuffle(subtrees)
             for subtree in subtrees:
                 self._optimize_subtree_root_node(subtree=subtree, inputs=inputs, targets=targets)
-            self.tree.update_depth()
 
             # Recalculate loss
             prev_loss, loss = loss, self._regularized_loss(subtree=self.tree, targets=targets)
+            print(loss)
+
+            if np.abs(loss - prev_loss) < self.tol:
+                break
 
         # Return locally optimal tree
+        self.tree.update_splits(inputs=inputs, targets=targets)
         return self.tree

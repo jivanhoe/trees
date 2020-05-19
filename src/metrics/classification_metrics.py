@@ -7,14 +7,12 @@ from models.tree import Tree
 
 
 def predict_probs(tree: Tree, targets: np.ndarray) -> Tuple[np.ndarray, np.ndarray]:
-    targets = targets[tree.data]
-    classes = np.unique(targets)
-    probs = np.zeros((targets.shape[0], classes.shape[0]))
+    num_classes = tree.data.value.shape[0]
+    probs = np.zeros((targets.shape[0], num_classes))
     for leaf_data in tree.get_leaf_data():
-        leaf_data = leaf_data[tree.data]
-        for k, class_id in enumerate(classes):
-            probs[leaf_data, k] = (leaf_data * (targets == class_id)).sum() / leaf_data.sum()
-    return targets, probs
+        for k in range(num_classes):
+            probs[leaf_data.key, k] = leaf_data.value[k]
+    return targets[tree.data.key], probs[tree.data.key]
 
 
 def accuracy(tree: Tree, targets: np.ndarray) -> float:
@@ -24,6 +22,7 @@ def accuracy(tree: Tree, targets: np.ndarray) -> float:
 
 def roc_auc(tree: Tree, targets: np.ndarray) -> float:
     targets, probs = predict_probs(tree=tree, targets=targets)
+    probs = probs[:, np.any(probs > 0, axis=0)]
     if probs.shape[1] > 2:
         return roc_auc_score(y_true=targets, y_score=probs, multi_class="ovr", average="macro")
     if probs.shape[1] == 2:
@@ -40,7 +39,7 @@ def average_precision(tree: Tree, targets: np.ndarray) -> float:
     return 1.0
 
 
-def weighted_gini_impurity(tree: Tree, targets: np.ndarray) -> float:
+def weighted_gini_purity(tree: Tree, targets: np.ndarray) -> float:
     targets, probs = predict_probs(tree=tree, targets=targets)
-    return (1 - (probs * probs).sum(1)).mean()
+    return (probs * probs).sum(1).mean()
 
