@@ -9,19 +9,21 @@ class NodeData:
     def __init__(
             self,
             key: np.ndarray,
-            value: Union[float, np.ndarray]
+            value: np.ndarray,
+            is_classifier: bool
     ):
         self.key = key
         self.value = value
+        self.is_classifier = is_classifier
 
     def update_values(self, targets: np.ndarray):
-        if type(self.value) is float:
-            self.value = targets[self.key].mean()
-        else:
+        if self.is_classifier:
             node_targets = targets[self.key]
             num_samples = node_targets.shape[0]
             for k in range(self.value.shape[0]):
                 self.value[k] = np.sum(node_targets == k) / num_samples if num_samples > 0 else 0
+        else:
+            self.value = targets[self.key]
 
 
 class Tree:

@@ -1,8 +1,8 @@
+from copy import deepcopy
 from typing import Callable, Optional
 
 import numpy as np
 from sklearn.model_selection import train_test_split
-from copy import deepcopy
 
 from models.tree import Tree, NodeData
 
@@ -145,7 +145,8 @@ class GreedyStart:
         self.tree = Tree(
             data=NodeData(
                 key=np.ones(num_samples, dtype=bool),
-                value=np.unique(targets, return_counts=True)[1] / num_samples if self.is_classifier else targets.mean()
+                value=np.unique(targets, return_counts=True)[1] / num_samples if self.is_classifier else targets.mean(),
+                is_classifier=self.is_classifier
             )
         )
 
