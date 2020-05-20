@@ -1,6 +1,6 @@
 
 
-class OptimalClassificationTree:
+class OptimizedTree:
 
     def __init__(
             self,

@@ -15,7 +15,7 @@ class GreedyStart:
             is_classifier: bool,
             min_leaf_size: int = 1,
             max_depth: int = 10,
-            max_features: Optional[float] = None,
+            max_features: Optional[float] = 1.0,
             max_samples: Optional[float] = None,
             random_state: int = 0
     ):
@@ -29,9 +29,9 @@ class GreedyStart:
         (default 1)
         :param max_depth:  an integer hyperparameter specifying the maximum depth of any leaf (default 10)
         :param max_features: a float hyperparameter in range (0, 1] the specifies the proportion of features considered
-        for each greedy split (default None)
-        :param max_samples: a float hyperparameter in range (0, 1] that specifies the proportion of samples from the
-        training data used to inform the greedy splits when growing the tree (default None)
+        for each greedy split (default 1.0, set to 1/sqrt(n_samples) upon training if None provided)
+        :param max_samples: a float hyperparameter in range (0, 1] that, if provided, specifies the proportion of
+        samples from the training data used to inform the greedy splits when growing the tree (default None)
         :param random_state: an integer used to set the numpy seed to control the random behavior of the algorithm
         (default 0)
         """
@@ -54,7 +54,7 @@ class GreedyStart:
         """
 
         # Initialize loss and best split parameters
-        min_loss = -self.criterion(tree=subtree, targets=targets)
+        min_loss = -self.criterion(predicted=subtree.predict(), targets=targets[subtree.data.key])
         best_split_feature, best_split_threshold = None, None
 
         # Initialize children
@@ -68,7 +68,8 @@ class GreedyStart:
         for split_feature in features:
 
             # Get reference values for candidate split thresholds for feature
-            feature_values = np.unique(inputs[subtree.data.key, split_feature].flatten())
+            feature_values = inputs[subtree.data.key, split_feature].flatten()
+            feature_values = np.unique(feature_values[self.min_leaf_size:-self.min_leaf_size])
 
             for split_threshold in (feature_values[:-1] + feature_values[1:]) / 2:
 
@@ -81,10 +82,10 @@ class GreedyStart:
                 )
 
                 # Check if split is feasible
-                if min([leaf_data.key.sum() for leaf_data in subtree.get_leaf_data()]) >= self.min_leaf_size:
+                if subtree.get_min_leaf_size() >= self.min_leaf_size:
 
                     # Check if split improves objective and update best split if so
-                    loss = -self.criterion(tree=subtree, targets=targets)
+                    loss = -self.criterion(predicted=subtree.predict(), targets=targets[subtree.data.key])
                     if loss < min_loss:
                         min_loss, best_split_feature, best_split_threshold = loss, split_feature, split_threshold
 
@@ -107,18 +108,15 @@ class GreedyStart:
         :return: None
         """
 
-        # Check if subtree is leaf
-        if subtree.is_leaf():
+        # Expand the leaf with the best greedy split
+        self._make_greedy_split(subtree=subtree, inputs=inputs, targets=targets)
+        self.tree.update_depth()
 
-            # Expand the leaf with the best greedy split
-            self._make_greedy_split(subtree=subtree, inputs=inputs, targets=targets)
-            self.tree.update_depth()
-
-            # Repeat recursively if further splits are feasible
-            if not subtree.is_leaf():
-                for child in subtree.get_children():
-                    if (child.data.key.sum() > self.min_leaf_size) and (child.root_depth < self.max_depth):
-                        self._grow(subtree=child, inputs=inputs, targets=targets)
+        # Repeat recursively if further splits are feasible
+        if not subtree.is_leaf():
+            for child in subtree.get_children():
+                if (child.data.key.sum() > self.min_leaf_size) and (child.root_depth < self.max_depth):
+                    self._grow(subtree=child, inputs=inputs, targets=targets)
 
     def build_tree(self, inputs: np.ndarray, targets: np.ndarray) -> Tree:
         """
@@ -137,7 +135,7 @@ class GreedyStart:
 
         # If max examples is specified, select a stratified sample of training data
         if self.max_samples:
-            inputs, targets, _, _ = train_test_split(inputs, targets, shuffle=True, stratify=targets,
+            inputs, _, targets, _ = train_test_split(inputs, targets, shuffle=True, stratify=targets,
                                                      test_size=1-self.max_samples)
 
         # Initialize tree data

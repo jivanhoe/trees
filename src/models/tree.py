@@ -15,13 +15,14 @@ class NodeData:
         self.key = key
         self.value = value
         self.is_classifier = is_classifier
+        self.n_train_samples = self.key.sum()
 
     def update_values(self, targets: np.ndarray):
         if self.is_classifier:
+            self.n_train_samples = self.key.sum()
             node_targets = targets[self.key]
-            num_samples = node_targets.shape[0]
             for k in range(self.value.shape[0]):
-                self.value[k] = np.sum(node_targets == k) / num_samples if num_samples > 0 else 0
+                self.value[k] = np.sum(node_targets == k) / self.n_train_samples if self.n_train_samples > 0 else 0
         else:
             self.value = targets[self.key]
 
@@ -53,9 +54,9 @@ class Tree:
         )
 
     def is_pure(self) -> bool:
-        if self.data.value is float:
-            return False
-        return np.max(self.data.value) == 1
+        if self.data.is_classifier:
+            return np.max(self.data.value) == 1
+        return np.std(self.data.value) == 0
 
     def get_node_count(self) -> int:
         if self.is_leaf():
@@ -70,24 +71,40 @@ class Tree:
     def get_children(self) -> Tuple[Tree, Tree]:
         return self.left, self.right
 
-    def get_subtrees(self, subtrees: Optional[List] = None) -> List[Tree]:
+    def get_subtrees(self, subtrees: Optional[List[Tree]] = None) -> List[Tree]:
         if subtrees is None:
             subtrees = []
         subtrees.append(self)
         if not self.is_leaf():
-            self.left.get_subtrees(subtrees=subtrees)
-            self.right.get_subtrees(subtrees=subtrees)
+            for child in self.get_children():
+                child.get_subtrees(subtrees=subtrees)
         return subtrees
 
-    def get_leaf_data(self, leaf_data: Optional[List] = None) -> List[NodeData]:
-        if leaf_data is None:
-            leaf_data = []
+    def get_leaves(self, leaves: Optional[List[Tree]] = None) -> List[Tree]:
+        if leaves is None:
+            leaves = []
         if self.is_leaf():
-            leaf_data.append(self.data)
+            leaves.append(self)
         else:
-            self.left.get_leaf_data(leaf_data=leaf_data)
-            self.right.get_leaf_data(leaf_data=leaf_data)
-        return leaf_data
+            for child in self.get_children():
+                child.get_leaves(leaves=leaves)
+        return leaves
+
+    def get_leaf_parents(self, leaf_parents: Optional[List[Tree]] = None):
+        if leaf_parents is None:
+            leaf_parents = []
+        if not self.is_leaf():
+            if self.left.is_leaf() or self.right.is_leaf():
+                leaf_parents.append(self)
+            for child in self.get_children():
+                child.get_leaf_parents(leaf_parents=leaf_parents)
+        return leaf_parents
+
+    def delete_children(self):
+        self.left, self.right, self.split_feature, self.split_threshold = None, None, None, None
+
+    def get_min_leaf_size(self) -> int:
+        return min(int(leaf.data.n_train_samples) for leaf in self.get_leaves())
 
     def update_splits(
             self,
@@ -119,15 +136,30 @@ class Tree:
                 for child in self.get_children():
                     if child.is_leaf() or not update_leaf_values_only:
                         child.data.update_values(targets=targets)
-
-            self.left.update_splits(inputs=inputs, targets=targets, update_leaf_values_only=update_leaf_values_only)
-            self.right.update_splits(inputs=inputs, targets=targets, update_leaf_values_only=update_leaf_values_only)
+            for child in self.get_children():
+                child.update_splits(inputs=inputs, targets=targets, update_leaf_values_only=update_leaf_values_only)
 
     def update_depth(self) -> None:
         for child in self.get_children():
             if child:
                 child.root_depth = self.root_depth + 1
                 child.update_depth()
+
+    def predict(self, inputs: Optional[np.ndarray] = None) -> np.ndarray:
+        if inputs is not None:
+            self.data.key = np.ones(inputs.shape[0], dtype=bool)
+            self.update_splits(inputs=inputs)
+        if self.data.is_classifier:
+            n_classes = self.data.value.shape[0]
+            predicted = np.zeros((self.data.key.shape[0], n_classes))
+            for leaf in self.get_leaves():
+                for k in range(n_classes):
+                    predicted[leaf.data.key, k] = leaf.data.value[k]
+        else:
+            predicted = np.zeros(inputs.shape)
+            for leaf in self.get_leaves():
+                predicted[leaf.data.key] = leaf.data.value.mean()
+        return predicted[self.data.key]
 
 
 

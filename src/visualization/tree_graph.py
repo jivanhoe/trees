@@ -50,16 +50,15 @@ class TreeGraph(Digraph):
                 self.colors = [self.colors[k % num_colors] for k in range(num_classes)]
 
     def _get_root_node_label(self, subtree: Tree) -> str:
-        num_samples = subtree.data.key.sum()
         if subtree.data.is_classifier:
             modal_class = np.argmax(subtree.data.value)
             modal_class_name = self.class_names[modal_class] if self.class_names else modal_class
             modal_class_pct = "{0:.0f}".format(subtree.data.value.max() * 100)
-            label = f"Modal class: {modal_class_name} ({modal_class_pct}%) \n Samples: {num_samples}"
+            label = f"Modal class: {modal_class_name} ({modal_class_pct}%) \n Samples: {subtree.data.n_train_samples}"
         else:
             mean_value = subtree.data.value.mean()
             pct_error = "{0:.0f}".format(np.sqrt((subtree.data.value - mean_value) ** 2) / mean_value * 100)
-            label = f"Estimated value: {mean_value} (±{pct_error}%) \n Samples: {num_samples}"
+            label = f"Estimated value: {mean_value} (±{pct_error}%) \n Samples: {subtree.data.n_train_samples}"
         if not subtree.is_leaf():
             feature = self.feature_names[
                 subtree.split_feature] if self.feature_names else f"feature {subtree.split_feature}"
