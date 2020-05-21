@@ -21,8 +21,8 @@ class GreedyStart:
     ):
         """
         Initialize a greedy search object used to a build feasible tree.
-        :param criterion: a callable object that accepts the arguments 'tree', a Tree object, and 'targets', a
-        numpy array of shape (n_samples,), and returns a float representing the objective the tree on the data
+        :param criterion: a callable scoring criterion accepts predictions and targets as numpy arrays and returns a
+        float representing the score the tree on the data
         :param is_classifier: a boolean that specifies if the tree is being used for a classification  problem, else it
         is assumed to be for a regression problem
         :param min_leaf_size: an integer hyperparameter specifying the minimum number of training examples in any leaf
@@ -46,15 +46,15 @@ class GreedyStart:
 
     def _make_greedy_split(self, subtree: Tree, inputs: np.ndarray, targets: np.ndarray) -> None:
         """
-        Split a leaf node to minimize the loss criterion amongst its newly created children.
+        Split a leaf node to maximize the scoring criterion amongst its newly created children.
         :param subtree: a Tree object
         :param inputs: a numpy array of shape (n_samples, n_features) specifying the input values of the data
         :param targets: a numpy array of shape (n_samples,) specifying the target values of the data
         :return: None
         """
 
-        # Initialize loss and best split parameters
-        min_loss = -self.criterion(predicted=subtree.predict(), targets=targets[subtree.data.key])
+        # Initialize objective and best split parameters
+        max_score = self.criterion(predicted=subtree.predict(), targets=targets[subtree.data.key])
         best_split_feature, best_split_threshold = None, None
 
         # Initialize children
@@ -85,9 +85,9 @@ class GreedyStart:
                 if subtree.get_min_leaf_size() >= self.min_leaf_size:
 
                     # Check if split improves objective and update best split if so
-                    loss = -self.criterion(predicted=subtree.predict(), targets=targets[subtree.data.key])
-                    if loss < min_loss:
-                        min_loss, best_split_feature, best_split_threshold = loss, split_feature, split_threshold
+                    score = self.criterion(predicted=subtree.predict(), targets=targets[subtree.data.key])
+                    if score > max_score:
+                        max_score, best_split_feature, best_split_threshold = score, split_feature, split_threshold
 
         # Reset root split to best split
         if best_split_feature is None:

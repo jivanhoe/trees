@@ -16,7 +16,7 @@ class Pruner:
             self,
             base_tree: Tree,
             criterion: Callable,
-            complexity_param: float = 1e-2,
+            complexity_param: float = 1e-3,
     ):
         self.base_tree = base_tree
         self.criterion = criterion

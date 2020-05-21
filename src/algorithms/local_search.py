@@ -1,6 +1,6 @@
 import logging
 from copy import deepcopy
-from typing import Callable, Optional
+from typing import Callable, Optional, Tuple
 
 import numpy as np
 
@@ -9,7 +9,6 @@ from metrics.classification_metrics import weighted_gini_purity
 from metrics.regression_metrics import mean_squared_error
 from models.tree import Tree
 
-logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 
@@ -22,22 +21,23 @@ class LocalSearch:
             min_leaf_size: int = 1,
             max_depth: int = 10,
             split_tol: float = np.inf,
-            search_tol: float = 1e-3,
+            search_tol: float = 1e-5,
             max_iterations: int = 10,
             random_state: int = 0,
+            verbose: bool = False,
             tree: Optional[Tree] = None,
     ):
         """
         Initialize a local search object used to a improve upon a feasible tree.
-        :param criterion: a callable object that accepts the arguments 'tree', a Tree object, and 'targets', a
-        numpy array of shape (n_samples,), and returns a float representing the loss the tree on the data
+        :param criterion: a callable scoring criterion accepts predictions and targets as numpy arrays and returns a
+        float representing the score the tree on the data
         :param is_classifier: a boolean that specifies if the tree is being used for a classification  problem, else it
         is assumed to be for a regression problem
         :param min_leaf_size: an integer hyperparameter that specifies the minimum number of training examples in any
         leaf (default 1)
         :param max_depth: an integer hyperparameter the specifies the maximum depth of any leaf (default 10)
-        :param split_tol: a float that specifies the maximum deterioration in the loss before a split threshold search
-        is terminated (default inf)
+        :param split_tol: a float that specifies the maximum deterioration in the objective before a split threshold
+        search is terminated (default inf)
         :param search_tol: a float that specifies the cut-off tolerance for terminating the local search
         :param max_iterations: an integer that specifies the maximum number of iterations of local search performed
         :param random_state: an integer used to set the numpy seed to control the random behavior of the algorithm
@@ -53,6 +53,7 @@ class LocalSearch:
         self.search_tol = search_tol
         self.max_iterations = max_iterations
         self.random_state = random_state
+        self.verbose = verbose
         self.tree = tree
 
     def _optimize_subtree_root_split(self, subtree: Tree, inputs: np.ndarray, targets: np.ndarray) -> float:
@@ -61,11 +62,11 @@ class LocalSearch:
         :param subtree: a Tree object
         :param inputs: a numpy array of shape (n_samples, n_features) specifying the input values of the data
         :param targets: a numpy array of shape (n_samples,) specifying the target values of the data
-        :return: a float representing the regularized loss of the subtree with the optimal root split
+        :return: a float representing the objective value (i.e. score) of the subtree with the optimal root split
         """
 
-        # Initialize min loss
-        min_loss = -self.criterion(predicted=subtree.predict(), targets=targets[subtree.data.key])
+        # Initialize objective value
+        max_score = self.criterion(predicted=subtree.predict(), targets=targets[subtree.data.key])
 
         # Add children if subtree is leaf and initialize best split parameters
         if subtree.is_leaf():
@@ -77,8 +78,8 @@ class LocalSearch:
         # Iterate over all features
         for split_feature in range(inputs.shape[1]):
 
-            # Initialize min loss for feature
-            min_loss_for_feature = np.inf
+            # Initialize objective value for feature
+            max_score_for_feature = -np.inf
 
             # Get reference values for candidate split thresholds for feature
             feature_values = inputs[subtree.data.key, split_feature].flatten()
@@ -100,22 +101,22 @@ class LocalSearch:
                 # Check if split is feasible
                 if subtree.get_min_leaf_size() >= self.min_leaf_size:
 
-                    # Check if split improves objective and update best split if so
-                    loss = -self.criterion(predicted=subtree.predict(), targets=targets[subtree.data.key])
-                    if loss < min_loss:
-                        min_loss, best_split_feature, best_split_threshold = loss, split_feature, split_threshold
+                    # Check if split improves objective value and update best split if so
+                    score = self.criterion(predicted=subtree.predict(), targets=targets[subtree.data.key])
+                    if score > max_score:
+                        max_score, best_split_feature, best_split_threshold = score, split_feature, split_threshold
 
                     # Check if split has deteriorated sufficiently to end threshold search for feature
-                    if loss < min_loss_for_feature:
-                        min_loss_for_feature = loss
-                    elif loss - min_loss_for_feature > self.split_tol:
+                    if score > max_score_for_feature:
+                        max_score_for_feature = score
+                    elif max_score_for_feature - score > self.split_tol:
                         break
 
         # Remove children if best root is leaf
         if best_split_feature is None:
             subtree.left, subtree.right = None, None
 
-        # Reset root split to best split and return min loss
+        # Reset root split to best split and best objective value
         subtree.update_splits(
             inputs=inputs,
             targets=targets,
@@ -124,7 +125,7 @@ class LocalSearch:
             update_leaf_values_only=True
         )
         subtree.update_depth()
-        return min_loss
+        return max_score
 
     def _optimize_subtree_root_node(self, subtree: Tree, inputs: np.ndarray, targets: np.ndarray) -> float:
         """
@@ -132,27 +133,27 @@ class LocalSearch:
         :param subtree: a Tree object
         :param inputs: a numpy array of shape (n_samples, n_features) specifying the input values of the data
         :param targets: a numpy array of shape (n_samples,) specifying the target values of the data
-        :return: a float representing the regularized loss of the subtree with the optimized root node
+        :return: a float representing the objective value (i.e. score) of the subtree with the optimized root node
         """
 
         # Copy children
         left, right = map(deepcopy, subtree.get_children())
 
-        # Optimize root split if split does not exceed max depth and calculate min loss
+        # Optimize root split if split does not exceed max depth and calculate best objective value
         if subtree.root_depth < self.max_depth and not subtree.is_pure():
-            min_loss = self._optimize_subtree_root_split(subtree=subtree, inputs=inputs, targets=targets)
+            max_score = self._optimize_subtree_root_split(subtree=subtree, inputs=inputs, targets=targets)
         else:
-            min_loss = -self.criterion(predicted=subtree.predict(), targets=targets[subtree.data.key])
+            max_score = self.criterion(predicted=subtree.predict(), targets=targets[subtree.data.key])
 
-        # Check if root deletion improves objective and replace with child if so
+        # Check if root deletion improves objective value and replace with child if so
         for child in (left, right):
             if child:
                 child.data = subtree.data
                 child.update_splits(inputs=inputs, targets=targets, update_leaf_values_only=True)
                 if child.get_min_leaf_size() >= self.min_leaf_size:
-                    loss = -self.criterion(predicted=child.predict(), targets=targets[child.data.key])
-                    if loss < min_loss:
-                        min_loss = loss
+                    score = self.criterion(predicted=child.predict(), targets=targets[child.data.key])
+                    if score > max_score:
+                        max_score = score
                         subtree.left, subtree.right = child.left, child.right
                         subtree.update_splits(
                             inputs=inputs,
@@ -162,7 +163,7 @@ class LocalSearch:
                             update_leaf_values_only=True
                         )
         subtree.update_depth()
-        return min_loss
+        return max_score
 
     def _initialize_tree(self, inputs: np.ndarray, targets: np.ndarray) -> None:
         """
@@ -186,21 +187,27 @@ class LocalSearch:
             assert (self.tree.get_max_depth() <= self.max_depth) and (
                     self.tree.get_min_leaf_size() >= self.min_leaf_size), "Error - initial tree is infeasible."
 
-    def optimize_tree(self, inputs: np.ndarray, targets: np.ndarray) -> Tree:
+    def _log(self, msg: str) -> None:
+        if self.verbose:
+            logger.info(msg)
+
+
+    def optimize_tree(self, inputs: np.ndarray, targets: np.ndarray) -> Tuple[Tree, float]:
         """
         Use a local search heuristic to iteratively improve a feasible tree until a local optimum is reached.
         :param inputs: a numpy array of shape (n_samples, n_features) specifying the input values of the data
         :param targets: a numpy array of shape (n_samples,) specifying the target values of the data
-        :return: a Tree object that is locally optimal for the given data
+        :return: a tuple consisting of a Tree object that is locally optimal for the given data, and a float that
+        represents the corresponding score
         """
 
         # Set seed
         np.random.seed(self.random_state)
 
-        # Initialize tree and loss
+        # Initialize tree and objective value
         self._initialize_tree(inputs=inputs, targets=targets)
-        prev_loss, loss = np.inf, -self.criterion(predicted=self.tree.predict(inputs=inputs), targets=targets)
-        logger.info(f"Iteration: {0} \t Objective value: {'{0:.3f}'.format(-loss)}")
+        prev_score, score = -np.inf, self.criterion(predicted=self.tree.predict(inputs=inputs), targets=targets)
+        self._log(f"Iteration: {0} \t Objective value: {'{0:.3f}'.format(score)}")
 
         # Iterate until improvement is less than cut-off tolerance or max iterations reached
         for i in range(self.max_iterations):
@@ -211,15 +218,15 @@ class LocalSearch:
             for subtree in subtrees:
                 self._optimize_subtree_root_node(subtree=subtree, inputs=inputs, targets=targets)
 
-            # Recalculate loss
+            # Recalculate objective value
             self.tree.update_splits(inputs=inputs)
-            prev_loss, loss = loss, -self.criterion(predicted=self.tree.predict(inputs=inputs), targets=targets)
-            logger.info(f"Iteration: {i + 1} \t Objective value: {'{0:.3f}'.format(-loss)}")
+            prev_score, score = score, self.criterion(predicted=self.tree.predict(inputs=inputs), targets=targets)
+            self._log(f"Iteration: {i + 1} \t Objective value: {'{0:.3f}'.format(score)}")
 
-            if np.abs(loss - prev_loss) < self.search_tol:
-                logger.info(f"No improvement found - terminating search.")
+            if np.abs(score - prev_score) < self.search_tol:
+                self._log(f"No improvement found - terminating search")
                 break
 
         # Return locally optimal tree
         self.tree.update_splits(inputs=inputs, targets=targets)
-        return self.tree
+        return self.tree, score
