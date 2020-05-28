@@ -22,6 +22,7 @@ class LocalSearch:
             max_depth: int = 10,
             split_tol: float = np.inf,
             search_tol: float = 1e-5,
+            max_candidates_per_split: int = 100,
             max_iterations: int = 10,
             random_state: int = 0,
             verbose: bool = False,
@@ -51,10 +52,38 @@ class LocalSearch:
         self.max_depth = max_depth
         self.split_tol = split_tol
         self.search_tol = search_tol
+        self.max_candidates_per_split = max_candidates_per_split
         self.max_iterations = max_iterations
         self.random_state = random_state
         self.verbose = verbose
         self.tree = tree
+
+    def _get_candidate_split_thresholds(self, subtree: Tree, inputs: np.ndarray, split_feature: int) -> np.ndarray:
+        """
+        Get candidate split thresholds for feature.
+        :param subtree: a Tree object
+        :param inputs: a numpy array of shape (n_samples, n_features) specifying the input values of the data
+        :param split_feature: an integer that specifies the column of the feature being considered for the split
+        :return: a numpy array of candidate split thresholds
+        """
+        # Get all possible candidate split thresholds based on data
+        feature_values = inputs[subtree.data.key, split_feature].flatten()
+        feature_values = np.unique(feature_values[self.min_leaf_size:-self.min_leaf_size])
+        candidate_split_thresholds = (feature_values[:-1] + feature_values[1:]) / 2
+
+        # If more candidates than the max amount
+        n_candidates = candidate_split_thresholds.shape[0]
+        if n_candidates > self.max_candidates_per_split:
+            candidate_split_thresholds = candidate_split_thresholds[np.round(
+                np.arange(self.max_candidates_per_split) * n_candidates / self.max_candidates_per_split).astype(
+                int)]
+
+        # If a split search termination toleration is specified, randomly select whether the search is performed from
+        # left to right or right to left
+        if (np.random.rand() > 0.5) and (self.split_tol < np.inf):
+            candidate_split_thresholds = candidate_split_thresholds[::-1]
+
+        return candidate_split_thresholds
 
     def _optimize_subtree_root_split(self, subtree: Tree, inputs: np.ndarray, targets: np.ndarray) -> float:
         """
@@ -81,14 +110,9 @@ class LocalSearch:
             # Initialize objective value for feature
             max_score_for_feature = -np.inf
 
-            # Get reference values for candidate split thresholds for feature
-            feature_values = inputs[subtree.data.key, split_feature].flatten()
-            feature_values = np.unique(feature_values[self.min_leaf_size:-self.min_leaf_size])
-            candidate_split_thresholds = (feature_values[:-1] + feature_values[1:]) / 2
-
             # Iterate over all candidate splits
-            for split_threshold in candidate_split_thresholds:
-
+            for split_threshold in self._get_candidate_split_thresholds(subtree=subtree, inputs=inputs,
+                                                                        split_feature=split_feature):
                 # Update root split
                 subtree.update_splits(
                     inputs=inputs,
@@ -167,12 +191,13 @@ class LocalSearch:
 
     def _initialize_tree(self, inputs: np.ndarray, targets: np.ndarray) -> None:
         """
-        If no tree provided, initialize a feasible solution one using a greedy splitting heuristic. Else check provided
-        tree is feasible.
+        Initialize a feasible tree before beginning local search.
         :param inputs: a numpy array of shape (n_samples, n_features) specifying the input values of the data
         :param targets: a numpy array of shape (n_samples,) specifying the target values of the data
         :return: None
         """
+
+        # If no tree provided, initialize a feasible solution one using a greedy splitting heuristic
         if self.tree is None:
             greedy_start = GreedyStart(
                 criterion=(weighted_gini_purity if self.is_classifier else mean_squared_error),
@@ -183,6 +208,8 @@ class LocalSearch:
                 random_state=self.random_state
             )
             self.tree = greedy_start.build_tree(inputs=inputs, targets=targets)
+
+        #  Else check provided tree is feasible.
         else:
             assert (self.tree.get_max_depth() <= self.max_depth) and (
                     self.tree.get_min_leaf_size() >= self.min_leaf_size), "Error - initial tree is infeasible."
@@ -190,7 +217,6 @@ class LocalSearch:
     def _log(self, msg: str) -> None:
         if self.verbose:
             logger.info(msg)
-
 
     def optimize_tree(self, inputs: np.ndarray, targets: np.ndarray) -> Tuple[Tree, float]:
         """

@@ -17,7 +17,7 @@ class NodeData:
         self.is_classifier = is_classifier
         self.n_train_samples = self.key.sum()
 
-    def update_values(self, targets: np.ndarray):
+    def update_value(self, targets: np.ndarray) -> None:
         if self.is_classifier:
             self.n_train_samples = self.key.sum()
             node_targets = targets[self.key]
@@ -90,7 +90,7 @@ class Tree:
                 child.get_leaves(leaves=leaves)
         return leaves
 
-    def get_leaf_parents(self, leaf_parents: Optional[List[Tree]] = None):
+    def get_leaf_parents(self, leaf_parents: Optional[List[Tree]] = None) -> List[Tree]:
         if leaf_parents is None:
             leaf_parents = []
         if not self.is_leaf():
@@ -135,7 +135,7 @@ class Tree:
             if targets is not None:
                 for child in self.get_children():
                     if child.is_leaf() or not update_leaf_values_only:
-                        child.data.update_values(targets=targets)
+                        child.data.update_value(targets=targets)
             for child in self.get_children():
                 child.update_splits(inputs=inputs, targets=targets, update_leaf_values_only=update_leaf_values_only)
 

@@ -20,7 +20,6 @@ class OptimizedTree:
     def __init__(
             self,
             is_classifier: bool,
-            criterion: Optional[str] = None,
             max_depth: int = 10,
             min_leaf_size: int = 1,
             complexity_param: float = 1e-3,
@@ -30,10 +29,9 @@ class OptimizedTree:
             tune_complexity_param: bool = True,
             retrain_after_tuning: bool = True,
             verbose: bool = False,
-            local_search_params: Optional[Dict[str, any]] = None
+            local_search_params: Optional[Dict[str, any]] = None,
+            criterion: Optional[str] = None,
     ):
-        self.criterion = criterion
-        self.criterion_callback = None
         self.is_classifier = is_classifier
         self.min_leaf_size = min_leaf_size
         self.max_depth = max_depth
@@ -45,27 +43,29 @@ class OptimizedTree:
         self.retrain_after_tuning = retrain_after_tuning
         self.verbose = verbose
         self.local_search_params = local_search_params
-        self.trees = []
-        self.scores = []
-        self.best_tree = None
+        self.criterion = criterion
+        self._criterion_callback = None
+        self._best_tree = None
+        self._trees = []
+        self._scores = []
 
     def _set_criterion_callback(self):
         if self.is_classifier:
             if self.criterion is None or self.criterion == "accuracy":
                 self.criterion = "accuracy"
-                self.criterion_callback = accuracy
+                self._criterion_callback = accuracy
             elif self.criterion == "auc":
-                self.criterion_callback = roc_auc
+                self._criterion_callback = roc_auc
             elif self.criterion == "precision":
-                self.criterion_callback = average_precision
+                self._criterion_callback = average_precision
             else:
                 raise NotImplementedError("Invalid scoring criterion - use 'accuracy', 'auc' or 'precision'")
         else:
             if self.criterion is None or self.criterion == "mse":
                 self.criterion = "mse"
-                self.criterion_callback = mean_squared_error
+                self._criterion_callback = mean_squared_error
             elif self.criterion == "r2":
-                self.criterion_callback = r_squared
+                self._criterion_callback = r_squared
             else:
                 raise NotImplementedError("Invalid scoring criterion - use 'mse' or 'r2'")
 
@@ -78,22 +78,23 @@ class OptimizedTree:
         # Repeat for number of specified random restarts
         for i in range(self.n_restarts):
 
-            self._log(f"Training trees - restart {i + 1}/{self.n_restarts}")
+            if (i + 1) % round(self.n_restarts / 10) == 0:
+                self._log(f"Training trees - restart {i + 1}/{self.n_restarts}")
 
             # Run local search
             local_search = LocalSearch(
-                criterion=self.criterion_callback,
+                criterion=self._criterion_callback,
                 is_classifier=self.is_classifier,
                 min_leaf_size=self.min_leaf_size,
                 max_depth=self.max_depth,
                 random_state=i,
-                *(self.local_search_params if self.local_search_params else {})
+                **(self.local_search_params if self.local_search_params else {})
             )
             tree, score = local_search.optimize_tree(inputs=inputs, targets=targets)
 
             # Store tree and corresponding objective value
-            self.trees.append(tree)
-            self.scores.append(score)
+            self._trees.append(tree)
+            self._scores.append(score)
 
     def _tune_complexity_parameter(
         self,
@@ -105,16 +106,16 @@ class OptimizedTree:
 
         # Initialize grids
         grid_size = 1000
-        batch_size = int(np.round(len(self.trees) * self.tuning_batch_size))
+        batch_size = int(np.round(len(self._trees) * self.tuning_batch_size))
         complexity_param_grid = np.logspace(-5, 0, grid_size)
         scoring_grid = np.zeros((batch_size, grid_size))
-        sorted_restarts = np.argsort(-np.array(self.scores))
+        sorted_restarts = np.argsort(-np.array(self._scores))
 
         # Iterate over each tree in the tuning batch
         for i in range(batch_size):
 
             # Performing pruning procedure on tree
-            pruner = Pruner(base_tree=self.trees[sorted_restarts[i]], criterion=self.criterion_callback)
+            pruner = Pruner(base_tree=self._trees[sorted_restarts[i]], criterion=self._criterion_callback)
             pruner.prune_tree(
                 train_inputs=train_inputs,
                 train_targets=train_targets,
@@ -135,11 +136,11 @@ class OptimizedTree:
 
     def _set_best_tree(self, inputs: np.ndarray, targets: np.ndarray) -> None:
         pruner = Pruner(
-            base_tree=self.trees[np.argmax(self.scores)],
-            criterion=self.criterion_callback,
+            base_tree=self._trees[np.argmax(self._scores)],
+            criterion=self._criterion_callback,
             complexity_param=self.complexity_param
         )
-        self.best_tree = pruner.prune_tree(train_inputs=inputs, train_targets=targets)
+        self._best_tree = pruner.prune_tree(train_inputs=inputs, train_targets=targets)
 
     def _fit_without_tuning(self, inputs: np.ndarray, targets: np.ndarray) -> None:
 
@@ -189,14 +190,9 @@ class OptimizedTree:
             self._fit_without_tuning(inputs=inputs, targets=targets)
 
     def predict(self, inputs: np.ndarray) -> np.ndarray:
-        assert self.best_tree is not None, "Cannot make predictions for unfitted model"
-        predictions = self.best_tree.predict(inputs=inputs)
+        assert self._best_tree is not None, "Cannot make predictions for unfitted model"
+        predictions = self._best_tree.predict(inputs=inputs)
         return predictions.argmax(1) if self.is_classifier else predictions
-
-    def predict_proba(self, inputs: np.ndarray) -> np.ndarray:
-        assert self.best_tree is not None, "Cannot make predictions for unfitted model"
-        assert self.is_classifier, "Cannot predict probabilities for regression model"
-        return self.best_tree.predict(inputs=inputs)
 
     def plot(
             self,
@@ -207,9 +203,9 @@ class OptimizedTree:
             fontsize: float = 10.0,
             max_depth_to_plot: int = 5
     ) -> TreeGraph:
-        assert self.best_tree is not None, "Cannot make plot tree for unfitted model"
+        assert self._best_tree is not None, "Cannot make plot tree for unfitted model"
         return TreeGraph(
-            tree=self.best_tree,
+            tree=self._best_tree,
             feature_names=feature_names,
             class_names=class_names,
             colors=colors,
@@ -218,3 +214,70 @@ class OptimizedTree:
             max_depth_to_plot=max_depth_to_plot
         )
 
+
+class OptimizedClassificationTree(OptimizedTree):
+
+    def __init__(
+            self,
+            criterion: Optional[str] = None,
+            max_depth: int = 10,
+            min_leaf_size: int = 1,
+            complexity_param: float = 1e-3,
+            n_restarts: int = 100,
+            validation_size: float = 0.2,
+            tuning_batch_size: float = 0.2,
+            tune_complexity_param: bool = True,
+            retrain_after_tuning: bool = True,
+            verbose: bool = False,
+            local_search_params: Optional[Dict[str, any]] = None
+    ):
+        super().__init__(
+            is_classifier=True,
+            criterion=criterion,
+            max_depth=max_depth,
+            min_leaf_size=min_leaf_size,
+            complexity_param=complexity_param,
+            n_restarts=n_restarts,
+            validation_size=validation_size,
+            tuning_batch_size=tuning_batch_size,
+            tune_complexity_param=tune_complexity_param,
+            retrain_after_tuning=retrain_after_tuning,
+            verbose=verbose,
+            local_search_params=local_search_params
+        )
+
+    def predict_proba(self, inputs: np.ndarray) -> np.ndarray:
+        assert self._best_tree is not None, "Cannot make predictions for unfitted model"
+        return self._best_tree.predict(inputs=inputs)
+
+
+class OptimizedRegressionTree(OptimizedTree):
+
+    def __init__(
+            self,
+            max_depth: int = 10,
+            min_leaf_size: int = 1,
+            complexity_param: float = 1e-3,
+            n_restarts: int = 100,
+            validation_size: float = 0.2,
+            tuning_batch_size: float = 0.2,
+            tune_complexity_param: bool = True,
+            retrain_after_tuning: bool = True,
+            verbose: bool = False,
+            local_search_params: Optional[Dict[str, any]] = None,
+            criterion: Optional[str] = None,
+    ):
+        super().__init__(
+            is_classifier=False,
+            criterion=criterion,
+            max_depth=max_depth,
+            min_leaf_size=min_leaf_size,
+            complexity_param=complexity_param,
+            n_restarts=n_restarts,
+            validation_size=validation_size,
+            tuning_batch_size=tuning_batch_size,
+            tune_complexity_param=tune_complexity_param,
+            retrain_after_tuning=retrain_after_tuning,
+            verbose=verbose,
+            local_search_params=local_search_params
+        )
