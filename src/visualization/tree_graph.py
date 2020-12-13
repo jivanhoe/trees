@@ -5,13 +5,14 @@ import numpy as np
 from graphviz import Digraph
 from matplotlib.colors import is_color_like
 
-from models.tree import Tree
+from core.tree import Tree
 from visualization.color import Color
 
 from copy import deepcopy
 
-logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
+
+DEFAULT_COLORS = ["tab:blue", "tab:orange", "tab:green", "tab:red", "tab:purple", "tab:pink", "tab:cyan"]
 
 
 class TreeGraph(Digraph):
@@ -31,14 +32,12 @@ class TreeGraph(Digraph):
         self.tree = tree
         self.class_names = class_names
         self.feature_names = feature_names
-        self.colors = colors if colors else deepcopy(TreeGraph.DEFAULT_COLORS)
+        self.colors = colors if colors else deepcopy(DEFAULT_COLORS)
         self.font = font
         self.fontsize = fontsize
         self.max_depth_to_plot = max_depth_to_plot
         if plot_on_init:
             self.plot()
-
-    DEFAULT_COLORS = ["tab:blue", "tab:orange", "tab:green", "tab:red", "tab:purple", "tab:pink", "tab:cyan"]
 
     def _validate_colors(self):
         assert np.all([is_color_like(color) for color in self.colors]), "Error - invalid color provided."
@@ -46,7 +45,10 @@ class TreeGraph(Digraph):
             num_classes = self.tree.data.value.shape[0]
             num_colors = len(self.colors)
             if len(self.colors) < num_classes:
-                logging.warning(f"Number of classes ({num_classes}) is greater than number of colors ({num_colors}) provided - reusing colors.")
+                logging.warning(
+                    f"Number of classes ({num_classes}) is greater than number of colors ({num_colors}) provided "
+                    f"- reusing colors."
+                )
                 self.colors = [self.colors[k % num_colors] for k in range(num_classes)]
 
     def _get_root_node_label(self, subtree: Tree) -> str:
@@ -73,7 +75,6 @@ class TreeGraph(Digraph):
     @staticmethod
     def _get_node_alpha(subtree: Tree) -> float:
         if subtree.data.is_classifier:
-            print()
             return max(2 * subtree.data.value.max() - 1, 0)
         mean_value = subtree.data.value.mean()
         pct_error = np.sqrt((subtree.data.value - mean_value) ** 2) / mean_value

@@ -7,8 +7,8 @@ from sklearn.model_selection import train_test_split
 from sklearn.preprocessing import LabelEncoder
 
 from algorithms.local_search import LocalSearch
-from algorithms.pruning import Pruner
-from metrics.classification_metrics import accuracy, roc_auc, average_precision
+from algorithms.pruner import Pruner
+from metrics.classification_metrics import accuracy, roc_auc, pr_auc
 from metrics.regression_metrics import mean_squared_error, r_squared
 from visualization.tree_graph import TreeGraph
 
@@ -20,6 +20,7 @@ class OptimizedTree:
     def __init__(
             self,
             is_classifier: bool,
+            criterion: str,
             max_depth: int = 10,
             min_leaf_size: int = 1,
             complexity_param: float = 1e-3,
@@ -30,7 +31,6 @@ class OptimizedTree:
             retrain_after_tuning: bool = True,
             verbose: bool = False,
             local_search_params: Optional[Dict[str, any]] = None,
-            criterion: Optional[str] = None,
     ):
         self.is_classifier = is_classifier
         self.min_leaf_size = min_leaf_size
@@ -51,13 +51,14 @@ class OptimizedTree:
 
     def _set_criterion_callback(self):
         if self.is_classifier:
-            if self.criterion is None or self.criterion == "accuracy":
+            if self.criterion is None:
                 self.criterion = "accuracy"
+            elif self.criterion == "accuracy":
                 self._criterion_callback = accuracy
             elif self.criterion == "auc":
                 self._criterion_callback = roc_auc
             elif self.criterion == "precision":
-                self._criterion_callback = average_precision
+                self._criterion_callback = pr_auc
             else:
                 raise NotImplementedError("Invalid scoring criterion - use 'accuracy', 'auc' or 'precision'")
         else:
@@ -124,7 +125,7 @@ class OptimizedTree:
             )
 
             # Calculate validation objective value as a function of complexity parameter for tree
-            validation_scores, critical_values = np.array(pruner.validation_scores), np.array(pruner.critical_values)
+            validation_scores, critical_values = np.array(pruner.validation_scores_), np.array(pruner.critical_values_)
             validation_score_diffs = np.diff(validation_scores, prepend=0)
             for j in range(grid_size):
                 scoring_grid[i, j] = (validation_score_diffs * (complexity_param_grid[j] >= critical_values)).sum()
@@ -136,7 +137,7 @@ class OptimizedTree:
 
     def _set_best_tree(self, inputs: np.ndarray, targets: np.ndarray) -> None:
         pruner = Pruner(
-            base_tree=self._trees[np.argmax(self._scores)],
+            base_tree=self._trees[np.argmax(self._scores)[0]],
             criterion=self._criterion_callback,
             complexity_param=self.complexity_param
         )
